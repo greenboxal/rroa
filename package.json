@@ -1,0 +1,15 @@
+{
+  "name": "RROA",
+  "version": "2.0.0",
+  "author": "Jonathan Lima <jonathan_2097@hotmail.com> (http://gamearmor.net/)",
+  "description": "RROA - Remote RO Admin",
+  "homepage": "http://gamearmor.net/",
+  "main": "./rroa",
+  "dependencies": {
+    "colors": "0.6.0-1",
+    "commander": "0.5.2"
+  },
+  "engines": {
+    "node": "*"
+  }
+}
