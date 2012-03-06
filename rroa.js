@@ -85,6 +85,34 @@ function readCString(buff, start, len) {
 	return str;
 }
 
+function isDigit(aChar) {
+	myCharCode = aChar.charCodeAt(0);
+
+	if((myCharCode > 47) && (myCharCode <  58))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+function runScript(data, file, args) {
+	try {
+		var sandbox = { require: require, 
+						console: console, 
+						client: client, 
+						parseCmd: parseCmd, 
+						program: program, 
+						args: args };
+		var script = vm.createScript(data, file);
+		
+		script.runInNewContext(sandbox);
+	} catch (ex) {
+		console.log('\n' + ex.toString().red);
+		console.log(new Error().stack.toString().red + '\n');
+	}
+}
+
 client.on('end', function() {
 	console.log('\nServer closed connection!'.red);
 	process.exit(0);
@@ -183,11 +211,53 @@ function parseCmd(cmd) {
 		} catch (ex) {
 			console.log('\n' + ex.toString().red + '\n');
 		}
+	} else if (args.length > 0) {
+		var data = undefined;
+		var file = 'scripts/' + args[0] + '.js';
+	
+		try {
+			data = fs.readFileSync(file, 'ascii');
+		} catch (ex) {
+			data = undefined;
+		}
+		
+		if (data != undefined) {
+			runScript(data, file, args.slice(1));
+		}
+		else {
+			console.log(args[0] + ': unknown command.');
+		}
 	}
 	
 	console.log('');
 	
 	consoleLoop();
+}
+
+function askname(acc, character_name, operation_type, year, month, day, hour, minute, dsecond)
+{
+	var buffer = new Buffer(44);
+	
+	buffer.writeInt16LE(0x2b0e, 0);
+	buffer.writeUInt32LE(acc, 2);
+	buffer.write(character_name, 6, 24);
+	buffer.writeInt16LE(operation_type, 30);
+	
+	if (operation_type == 2) {
+		buffer.writeInt16LE(year, 32);
+		buffer.writeInt16LE(month, 34);
+		buffer.writeInt16LE(day, 36);
+		buffer.writeInt16LE(hour, 38);
+		buffer.writeInt16LE(minute, 40);
+		buffer.writeInt16LE(second, 42);
+	}
+	
+	client.write(buffer);
+}
+
+ragServer.packetHooks = new Array;
+ragServer.registerPacketHook = function(cmd, p) {
+	ragServer.packetHooks[cmd] = p;
 }
 
 function parsePacket(cmd, size, data) {
@@ -264,9 +334,17 @@ function parsePacket(cmd, size, data) {
 	else if (cmd == 0x3800) {
 		console.log('Broadcast: '.white.bold + readCString(data, 12, size - 16));
 	}
+	else if (ragServer.packetHooks[cmd] != undefined)
+		ragServer.packetHooks[cmd](cmd, size, data);
 }
 
 function initCommands() {
+	cliCommands["commands"] = function(args) {
+		console.log('Buildin commands:');
+		for (key in cliCommands)
+			console.log('*', key);
+	}
+	
 	cliCommands["fakew"] = function(args) {
 		var pkt = new Buffer(4);
 		pkt.writeInt16LE(0x2afe, 0);
@@ -282,15 +360,77 @@ function initCommands() {
 		var file = args[0];
 
 		try {
-			var data = fs.readFileSync(file, 'ascii');
-			var sandbox = { console: console, client: client, parseCmd: parseCmd, program: program, args: args.slice(1) };
-			var script = vm.createScript(data, file);
-			
-			script.runInNewContext(sandbox);
+			data = fs.readFileSync(file, 'ascii');
 		} catch (ex) {
-			console.log('\n' + ex.toString().red + '\n');
+			data = undefined;
+		}
+		
+		if (data != undefined) {
+			runScript(data, file, args.slice(1));
+		}
+		else {
+			console.log('File not found.');
 		}
 	};
+	
+	cliCommands["broadcast"] = function(args) {
+		var len = args[0].length + 1;
+		var pkt = new Buffer(len + 16);
+		pkt.writeInt16LE(0x3000, 0);
+		pkt.writeInt16LE(len + 16, 2);
+		pkt.writeUInt32LE(0xFF000000, 4);
+		pkt.writeInt16LE(0, 8);
+		pkt.writeInt16LE(0, 10);
+		pkt.writeInt16LE(0, 12);
+		pkt.writeInt16LE(0, 14);
+		pkt.write(args[0], 16, len, 'utf8');
+		client.write(pkt);
+		console.log(len, pkt);
+	};
+	
+	cliCommands["block"] = function(args) {
+		askname(2000000, args[0], 1, 0, 0, 0, 0, 0, 0);
+	}
+	
+	cliCommands["ban"] = function(args) {
+		var year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+		var ac = '';
+		
+		for (var i = 0; i < args[0].length; i++) {
+			var ch = args[0].charAt(i);
+			
+			if (isDigit(ch)) {
+				ac += ch;
+			} else {
+				var n = parseInt(ac);
+				
+				switch (ch) {
+					case 's': second += n; break;
+					case 'm': minute += n; break;
+					case 'h': hour += n; break;
+					case 'd': day += n; break;
+					case 'M': month += n; break;
+					case 'y': year += n; break;
+				}
+				
+				ac = '';
+			}
+		}
+		
+		askname(2000000, args[1], 2, year, month, day, hour, minute, second);
+	}
+	
+	cliCommands["unblock"] = function(args) {
+		askname(2000000, args[0], 3, 0, 0, 0, 0, 0, 0);
+	}
+	
+	cliCommands["unban"] = function(args) {
+		askname(2000000, args[0], 4, 0, 0, 0, 0, 0, 0);
+	}
+	
+	cliCommands["changesex"] = function(args) {
+		askname(2000000, args[0], 5, 0, 0, 0, 0, 0, 0);
+	}
 }
 
 program.parse(process.argv);
@@ -309,7 +449,7 @@ client.connect(program.port, program.host, function() {
 	var pkt = new Buffer(60);
 	pkt.writeInt16LE(0x2af8, 0);
 	pkt.write(program.user, 2, 24, 'utf8');
-	pkt.write(program.pass, 26, 2, 'utf8');
+	pkt.write(program.pass, 26, 24, 'utf8');
 	pkt.writeInt32BE(0, 50);
 	pkt.writeInt32BE(ipToInt(client.address().address), 54);
 	pkt.writeInt16BE(client.address().port, 58);
